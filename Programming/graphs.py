@@ -6,78 +6,91 @@ import math
 
 df = pd.read_csv('data.csv')
 
-# Extract data from columns
+# Извлечение данных из столбцов
 time_values = df['Time']
 velocity_values = df['Velocity']
-acceleration_values = df['Acceleration']  # Assuming 'velocity' is the column for initial velocity
+acceleration_values = df['Acceleration']
 
 # Константы
 g = 9.81  # ускорение свободного падения, м/с^2
 v0 = 0.37  # начальная скорость, м/с
 B = 1.29e-4  # коэффициент сопротивления воздуха
-c = 0.045  # коэффициент формы
-S = math.pi * 13 ** 2 /4 # площадь сечения, м^2
+c = 0.045  # коэффициент лобового сопротивления
+S = math.pi * 13 ** 2 / 4  # площадь сечения, м^2
 p0 = 1.225  # плотность воздуха на уровне моря, кг/м^3
-
 # Другие параметры
-E = (7.77e6*5 -6.77e6*5)/165# параметр, связанный с тягой
-T = 1  # характерное время в экспоненте
+E = (7.77e6 * 5 - 6.77e6 * 5) / 165  # коэффициент изменение тяги
+T = 170  # характерное время в экспоненте
 m0 = 2900000  # начальная масса
-a = 1300  # коэффициент в уравнении массы
+a = 1300  # коэффициент сжигания топлива
+KSP = 1/320 # Коэффициент сопостовления КСП и мат модели
 
 
 # Система дифференциальных уравнений
 
 
-def runge_kutta_4(f, t0, y0, x0, h0, t, *args):
+def runge_kutta_4(f, f2, f3, t0, vx0, vy0, h0, t, *args):
     h = t - t0
-    k1 = h * f(t0, y0, x0, h0, *args)[0]
-    k2 = h * f(t0 + 0.5 * h, y0 + 0.5 * k1, x0, h0, *args)[0]
-    k3 = h * f(t0 + 0.5 * h, y0 + 0.5 * k2, x0, h0, *args)[0]
-    k4 = h * f(t0 + h, y0 + k3, x0, h0, *args)[0]
-    k11 = h * f(t0, y0, x0, h0, *args)[1]
-    k22 = h * f(t0 + 0.5 * h, y0, x0 + 0.5 * k11, h0, *args)[1]
-    k33 = h * f(t0 + 0.5 * h, y0, x0 + 0.5 * k22, h0, *args)[1]
-    k44 = h * f(t0 + h, y0, x0 + k33, h0, *args)[1]
-    return y0 + (k1 + 2 * k2 + 2 * k3 + k4) / 6, x0 + (k11 + 2 * k22 + 2 * k33 + k44) / 6, y0
+    k11 = f(t0, vx0, vy0, h0, *args)
+    k12 = f2(t0, vx0, vy0, h0, *args)
+    k13 = f3(t0, vx0, vy0, h0, *args)
+    k21 = f(t0 + 0.5 * h, vx0 + 0.5 * k11 * h, vy0 + 0.5 * k12 * h, h0 + k13 * h / 2, *args)
+    k22 = f2(t0 + 0.5 * h, vx0 + 0.5 * k11 * h, vy0 + 0.5 * k12 * h, h0 + k13 * h / 2, *args)
+    k23 = f3(t0 + 0.5 * h, vx0 + 0.5 * k11 * h, vy0 + 0.5 * k12 * h, h0 + k13 * h / 2, *args)
+    k31 = f(t0 + 0.5 * h, vx0 + 0.5 * k21 * h, vy0 + 0.5 * k22 * h, h0 + k23 * h / 2, *args)
+    k32 = f2(t0 + 0.5 * h, vx0 + 0.5 * k21 * h, vy0 + 0.5 * k22 * h, h0 + k23 * h / 2, *args)
+    k33 = f3(t0 + 0.5 * h, vx0 + 0.5 * k21 * h, vy0 + 0.5 * k22 * h, h0 + k23 * h / 2, *args)
+    k41 = f(t0 + 0.5 * h, vx0 + k31 * h, vy0 + 0.5 * k32 * h, h0 + k33 * h, *args)
+    k42 = f2(t0 + 0.5 * h, vx0 + k31 * h, vy0 + 0.5 * k32 * h, h0 + k33 * h, *args)
+    k43 = f3(t0 + 0.5 * h, vx0 + k31 * h, vy0 + 0.5 * k32 * h, h0 + k33 * h, *args)
+    return vx0 + (k11 + 2 * k21 + 2 * k31 + k41) * h / 6 + v0 / t, vy0 + (k12 + 2 * k22 + 2 * k32 + k42) * h / 6, h0+(
+                k13 + 2 * k23 + 2 * k33 + k43) * h / 6
 
 
-def solve_system(t, y, x, h, *args):
-    vy = y
-    vx = x
-    h = h
-    v= np.sqrt(vx**2 + vy**2)
-
+def solve_system_vy(t, vx, vy, h, *args):
+    v = np.sqrt(vx ** 2 + vy ** 2)
     m = m0 - a * t
-    Fthrust = 33832942*.7 + E * t
+    Fthrust = 6.77e6 * 5 + E * t
     a_t = np.degrees(90) * np.exp(-t / T)
-    #print(Fthrust * np.sin(a_t) + Fthrust * np.cos(a_t), m * g, (1 / 2) * c * S * p0 * np.exp(-B * h) * v ** 2 * np.sin(a_t))
-    # Your system of ODEs here
 
-    return [
-        (Fthrust * np.sin(a_t) - m * g  - (1 / 2) * c * S * p0 * np.exp(-B * h) * v ** 2 * np.sin(a_t)) / m,
-        ((Fthrust * np.cos(a_t) - (1 / 2) * c * S * p0 * np.exp(-B * h) * vx ** 2 * np.cos(a_t)) / m) + v0 / t,
-        vy
-    ]
+    return (abs(Fthrust * np.sin(a_t)) - m * g - (1 / 2) * c * S * p0 * np.exp(-B * h) * v ** 2 * np.sin(a_t)) / m
 
 
-t0 = 1
-y0 = [0, 0, 0]  # Initial conditions
-t = np.linspace(t0, 100, 10000)  # Time grid
-y = np.zeros((len(t), len(y0)))  # Solution grid
-y[0] = y0
+def solve_system_vx(t, vx, vy, h, *args):
 
-for i in range(1, len(t)):
-    y[i] = runge_kutta_4(solve_system, t[i - 1], y[i - 1][0], y[i - 1][1], y[i - 1][2], t[i])
+    v = np.sqrt(vx ** 2 + vy ** 2)
+    m = m0 - a * t
+    Fthrust = 6.77e6 * 5 + E * t
+    a_t = np.degrees(90) * np.exp(-t / T)
 
-vx = [y[i][1] for i in range(len(y))]
-vy = [y[i][2] for i in range(len(y))]
-#print(S)
+    return ((abs(Fthrust * np.cos(a_t)) - (1 / 2) * c * S * p0 * p0 * np.exp(-B * h) * v ** 2 * np.cos(a_t)) / m) +v0/t
 
-# Вычисляем сумму квадратов vx и vy и корень из этой суммы
-speed_magnitude = [np.sqrt(vx[i] ** 2 + vy[i] ** 2) for i in range(len(vx))]
+
+def change_h(t, vx, vy,h, *args):
+    return abs(vy)
+
+
+t0 = 1  # Первоначальные условия
+num = 1200
+stop = 120
+t = np.linspace(t0, stop, num)  # Временная сетка
+ans = [[0,0,0]]
+sec = stop / num
+for i in range(1, num):
+    time = i*sec
+    ans.append(
+        runge_kutta_4(solve_system_vx, solve_system_vy, change_h, t0, ans[i - 1][0], ans[i - 1][1], ans[i - 1][2],
+                      time))
+
+hh = []
+speed_magnitude = []
+for idx in range(len(ans)):
+    speed_magnitude.append((math.sqrt(ans[idx][0] ** 2 + ans[idx][1] ** 2))*KSP)
+    hh.append(ans[idx][2])
 
 velocity_values_interp = np.interp(t, time_values, velocity_values)
+
+tt = np.linspace(t0, len(speed_magnitude), len(speed_magnitude))
 
 # Построение графика
 plt.figure(figsize=(10, 6))
